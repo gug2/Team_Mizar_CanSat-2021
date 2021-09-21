@@ -183,29 +183,10 @@ void increaseEchoDelayTime(uint32_t increaseValue) {
 
 	// log to sd for debug
 	memset(SDmessage, 0, SDmessageWidth);
-	SDmessageWidth = sprintf(SDmessage, "Increase %d\r\n", echoRepeaterDelayTime);
+	SDmessageWidth = sprintf(SDmessage, "ECHO increase %d\r\n", echoRepeaterDelayTime);
 	writeToSD("Data.txt", SDmessage, SDmessageWidth);
 }
 
-/*void processEchoDelayTime() {
-	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_4, GPIO_PIN_RESET);
-	HAL_Delay(500);
-
-	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_RESET);
-	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, GPIO_PIN_SET);
-
-	HAL_Delay(echoRepeaterDelayTime * 50); // / 2800
-
-	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, GPIO_PIN_RESET);
-	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_SET);
-
-	echoRepeaterDelayTime = 0;
-
-	// log to sd for debug
-	memset(SDmessage, 0, SDmessageWidth);
-	SDmessageWidth = sprintf(SDmessage, "Hold on, process\r\n");
-	writeToSD("Data.txt", SDmessage, SDmessageWidth);
-}*/
 void startPreEchoDelayTime() {
 	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_4, GPIO_PIN_RESET);
 }
@@ -216,7 +197,7 @@ void startPostEchoDelayTime() {
 
 	// log to sd for debug
 	memset(SDmessage, 0, SDmessageWidth);
-	SDmessageWidth = sprintf(SDmessage, "Start process\r\n");
+	SDmessageWidth = sprintf(SDmessage, "ECHO started\r\n");
 	writeToSD("Data.txt", SDmessage, SDmessageWidth);
 }
 
@@ -228,7 +209,7 @@ void endEchoDelayTime() {
 
 	// log to sd for debug
 	memset(SDmessage, 0, SDmessageWidth);
-	SDmessageWidth = sprintf(SDmessage, "End process\r\n");
+	SDmessageWidth = sprintf(SDmessage, "ECHO complete\r\n");
 	writeToSD("Data.txt", SDmessage, SDmessageWidth);
 }
 
@@ -244,6 +225,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 			markCountDelayTime = true;
 		} else {
 			markProcessDelayTime = true;
+			startPreEchoDelayTime();
 		}
 	}
 }
@@ -395,12 +377,12 @@ int main(void)
   MX_TIM1_Init();
   MX_I2C1_Init();
   MX_SPI1_Init();
-  //MX_IWDG_Init();
+  MX_IWDG_Init();
   MX_ADC2_Init();
   /* USER CODE BEGIN 2 */
 
   // watchdog init \start
-  //HAL_IWDG_Init(&hiwdg);
+  HAL_IWDG_Init(&hiwdg);
   // watchdog init \end
 
   bmp280__init_STATUS = bmp280__init();
@@ -440,7 +422,7 @@ int main(void)
 	  //// ==== ////
 
 	  // watchdog \refresh start
-	  //HAL_IWDG_Refresh(&hiwdg);
+	  HAL_IWDG_Refresh(&hiwdg);
 	  // watchdog \refresh end
 
 	  if(gpsRxIndex > 0) {
@@ -516,7 +498,7 @@ int main(void)
 	  photoResistorValue = HAL_ADC_GetValue(&hadc2);
 	  HAL_ADC_Stop(&hadc2);
 	  if(photoResistorValue >= photoResistorThreshold) {
-		  //HAL_GPIO_WritePin(GPIOC, GPIO_PIN_6, GPIO_PIN_SET);
+		  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_6, GPIO_PIN_SET);
 	  }
 
 	  // sd
@@ -538,20 +520,8 @@ int main(void)
 	  memset(gnrmcString, 0, 64);***/
 
 	  // start Echo repeater
-	  /*if(markCountDelayTime == true && markProcessDelayTime == true) {
-		  processEchoDelayTime();
-
-		  markCountDelayTime = false;
-		  markProcessDelayTime = false;
-	  }
-	  if(markCountDelayTime == true) {
-	      increaseEchoDelayTime( HAL_GetTick() - startProgramTime );
-	      // repeatable event while mark is true
-	  }*/
 	  if(markCountDelayTime == true && markProcessDelayTime == true) {
 		  if(echoRepeaterStartTime == 0) {
-			  startPreEchoDelayTime();
-			  HAL_Delay(500);
 			  startPostEchoDelayTime();
 
 			  echoRepeaterStartTime = HAL_GetTick();
