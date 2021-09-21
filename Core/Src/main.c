@@ -19,8 +19,10 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "adc.h"
 #include "fatfs.h"
 #include "i2c.h"
+#include "iwdg.h"
 #include "rtc.h"
 #include "sdio.h"
 #include "spi.h"
@@ -83,6 +85,10 @@ char gnrmcString[64] = { '0' };
 float pressure, reference_pressure, temperature, humidity;
 float ax, ay, az, gx, gy, gz, relativeAltitude, absoluteAltitude;
 float pitch, roll, yaw;
+uint32_t
+	photoResistorValue = 0,
+	photoResistorThreshold = 500 // 0 - 4095 range
+;
 
 //// ======  Debug Statuses  ====== ////
 FRESULT
@@ -161,7 +167,10 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 	}
 }
 
-uint32_t echoRepeaterDelayTime = 0;
+uint32_t
+	echoRepeaterDelayTime = 0,
+	echoRepeaterStartTime = 0
+;
 bool
 	markCountDelayTime = false,
 	markProcessDelayTime = false
@@ -178,7 +187,7 @@ void increaseEchoDelayTime(uint32_t increaseValue) {
 	writeToSD("Data.txt", SDmessage, SDmessageWidth);
 }
 
-void processEchoDelayTime() {
+/*void processEchoDelayTime() {
 	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_4, GPIO_PIN_RESET);
 	HAL_Delay(500);
 
@@ -195,6 +204,31 @@ void processEchoDelayTime() {
 	// log to sd for debug
 	memset(SDmessage, 0, SDmessageWidth);
 	SDmessageWidth = sprintf(SDmessage, "Hold on, process\r\n");
+	writeToSD("Data.txt", SDmessage, SDmessageWidth);
+}*/
+void startPreEchoDelayTime() {
+	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_4, GPIO_PIN_RESET);
+}
+
+void startPostEchoDelayTime() {
+	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_RESET);
+	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, GPIO_PIN_SET);
+
+	// log to sd for debug
+	memset(SDmessage, 0, SDmessageWidth);
+	SDmessageWidth = sprintf(SDmessage, "Start process\r\n");
+	writeToSD("Data.txt", SDmessage, SDmessageWidth);
+}
+
+void endEchoDelayTime() {
+	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, GPIO_PIN_RESET);
+	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_SET);
+
+	echoRepeaterDelayTime = 0;
+
+	// log to sd for debug
+	memset(SDmessage, 0, SDmessageWidth);
+	SDmessageWidth = sprintf(SDmessage, "End process\r\n");
 	writeToSD("Data.txt", SDmessage, SDmessageWidth);
 }
 
@@ -243,6 +277,7 @@ float altitude(float pressure, bool isRelative) {
 
 // ВАЖНО! Запись на SD производится ТОЛЬКО ПРИ ОТКЛЮЧЕННОМ ОТ СЕТИ И ОТ STM программаторе
 void writeToSD(char* filename, uint8_t* buf, uint8_t width) {
+	// возможно из-за этого эхо репитер иногда долго раздупляется
 	__disable_irq();
 	open = f_open(&file, filename, FA_OPEN_ALWAYS | FA_WRITE);
 	seek = f_lseek(&file, f_size(&file));
@@ -360,7 +395,14 @@ int main(void)
   MX_TIM1_Init();
   MX_I2C1_Init();
   MX_SPI1_Init();
+  //MX_IWDG_Init();
+  MX_ADC2_Init();
   /* USER CODE BEGIN 2 */
+
+  // watchdog init \start
+  //HAL_IWDG_Init(&hiwdg);
+  // watchdog init \end
+
   bmp280__init_STATUS = bmp280__init();
   bmi160__init_STATUS = bmi160__init();
   lora__init_STATUS = lora__init();
@@ -396,6 +438,10 @@ int main(void)
     /* USER CODE BEGIN 3 */
 	  startProgramTime = HAL_GetTick();
 	  //// ==== ////
+
+	  // watchdog \refresh start
+	  //HAL_IWDG_Refresh(&hiwdg);
+	  // watchdog \refresh end
 
 	  if(gpsRxIndex > 0) {
 		  char* nmea = (char*)gpsRxBuffer;
@@ -465,11 +511,19 @@ int main(void)
 	  roll = atan2(-ax, sqrt(ay*ay + az*az)) * (180.0F / 3.14F);
 	  yaw = gz;
 
+	  HAL_ADC_Start(&hadc2);
+	  HAL_ADC_PollForConversion(&hadc2, 250);
+	  photoResistorValue = HAL_ADC_GetValue(&hadc2);
+	  HAL_ADC_Stop(&hadc2);
+	  if(photoResistorValue >= photoResistorThreshold) {
+		  //HAL_GPIO_WritePin(GPIOC, GPIO_PIN_6, GPIO_PIN_SET);
+	  }
+
 	  // sd
 	  memset(SDmessage, 0, SDmessageWidth);
 	  sprintf(SDmessage,
-	      "%d,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.1f,%.1f,%.1f",
-		  startProgramTime, ax, ay, az, gx, gy, gz, temperature, absoluteAltitude, relativeAltitude, pitch, roll, yaw
+	      "%d,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.1f,%.1f,%.1f,%d",
+		  startProgramTime, ax, ay, az, gx, gy, gz, temperature, absoluteAltitude, relativeAltitude, pitch, roll, yaw, photoResistorValue
 	  );
 	  // calculate crc16
 	  uint16_t crc = crc16(SDmessage);
@@ -484,7 +538,7 @@ int main(void)
 	  memset(gnrmcString, 0, 64);***/
 
 	  // start Echo repeater
-	  if(markCountDelayTime == true && markProcessDelayTime == true) {
+	  /*if(markCountDelayTime == true && markProcessDelayTime == true) {
 		  processEchoDelayTime();
 
 		  markCountDelayTime = false;
@@ -493,6 +547,30 @@ int main(void)
 	  if(markCountDelayTime == true) {
 	      increaseEchoDelayTime( HAL_GetTick() - startProgramTime );
 	      // repeatable event while mark is true
+	  }*/
+	  if(markCountDelayTime == true && markProcessDelayTime == true) {
+		  if(echoRepeaterStartTime == 0) {
+			  startPreEchoDelayTime();
+			  HAL_Delay(500);
+			  startPostEchoDelayTime();
+
+			  echoRepeaterStartTime = HAL_GetTick();
+
+			  markCountDelayTime = false;
+		  }
+	  }
+	  if(markProcessDelayTime == true) {
+		  if(HAL_GetTick() - echoRepeaterStartTime >= echoRepeaterDelayTime * 50) {
+			  endEchoDelayTime();
+
+			  echoRepeaterStartTime = 0;
+
+			  markProcessDelayTime = false;
+		  }
+	  }
+	  if(markCountDelayTime == true) {
+		  increaseEchoDelayTime( HAL_GetTick() - startProgramTime );
+		  // repeatable event while mark is true
 	  }
 	  // end Echo repeater
 
