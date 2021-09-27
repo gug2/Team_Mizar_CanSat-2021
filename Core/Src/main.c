@@ -514,10 +514,11 @@ int main(void)
 	  writeToSD("Data.txt", SDmessage, SDmessageWidth);
 
 	  /*** ** LoRa ** ***/
-	  /***memset(LoRaMessage, 0, LoRaMessageWidth);
+	  /*memset(LoRaMessage, 0, LoRaMessageWidth);
 	  LoRaMessageWidth = sprintf(LoRaMessage, "Hello World! %d <%s>\r\n", startProgramTime, (char*)gnrmcString);
-	  lora__send_STATUS = lora_send_packet_blocking(&lora, LoRaMessage, LoRaMessageWidth, 1000);
-	  memset(gnrmcString, 0, 64);***/
+	  lora__send_STATUS = lora_send_packet_blocking(&lora, LoRaMessage, LoRaMessageWidth, 250);
+	  memset(gnrmcString, 0, 64);*/
+	  /*** ** ==== ** ***/
 
 	  // start Echo repeater
 	  if(markCountDelayTime == true && markProcessDelayTime == true) {
