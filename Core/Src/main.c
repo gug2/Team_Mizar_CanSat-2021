@@ -252,12 +252,18 @@ uint8_t bmi160_I2Cread(uint8_t addr, uint8_t reg, uint8_t* data, uint16_t len) {
 }
 
 float altitude(float pressure, bool isRelative) {
-	float ref = isRelative ? reference_pressure : 101325.0F; // Sea level pressure in [Pa]
+	float ref = 0.0F;
+
+	if(isRelative == true) {
+		ref = reference_pressure;
+	} else if(isRelative == false) {
+		ref = 101325.0F; // Sea level pressure in [Pa]
+	}
 
 	return 44300.0F * (1.0F - powf(pressure / ref, 1.0F / 5.255F));
 }
 
-// ВАЖНО! Запись на SD производится ТОЛЬКО ПРИ ОТКЛЮЧЕННОМ ОТ СЕТИ И ОТ STM программаторе
+// ВАЖНО! Запись на SD производится ТОЛЬКО ПР�? ОТКЛЮЧЕННОМ ОТ СЕТ�? �? ОТ STM программаторе
 void writeToSD(char* filename, uint8_t* buf, uint8_t width) {
 	// возможно из-за этого эхо репитер иногда долго раздупляется
 	__disable_irq();
@@ -399,7 +405,7 @@ int main(void)
   // write header to SD card
   // Data header
   memset(SDmessage, 0, SDmessageWidth);
-  SDmessageWidth = sprintf(SDmessage, "T+,Ax,y,z,Gx,y,z,Temp,AltiAbs,AltiRel,P,R,Y|CRC\r\n");
+  SDmessageWidth = sprintf(SDmessage, "T+,Ax,y,z,Gx,y,z,Pres,Humi,Temp,AltiAbs,AltiRel,P,R,Y,Light|CRC\r\n");
   writeToSD("Data.txt", SDmessage, SDmessageWidth);
   // Gps header
   memset(GPSmessage, 0, GPSmessageWidth);
@@ -471,7 +477,8 @@ int main(void)
 	      memset(gpsRxBuffer, 0, 128);
 	      gpsRxIndex = 0;
 	      gpsRx = 0;
-	      memset(gnrmcString, 0, 64);
+	      // ** LoRa Radio send string => comment this **
+	      //memset(gnrmcString, 0, 64);
 	  }
 
 	  ////HAL_RTC_GetTime(&hrtc, &RTC__Time, RTC_FORMAT_BIN);
@@ -504,8 +511,8 @@ int main(void)
 	  // sd
 	  memset(SDmessage, 0, SDmessageWidth);
 	  sprintf(SDmessage,
-	      "%d,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.1f,%.1f,%.1f,%d",
-		  startProgramTime, ax, ay, az, gx, gy, gz, temperature, absoluteAltitude, relativeAltitude, pitch, roll, yaw, photoResistorValue
+	      "%d,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.1f,%.1f,%.2f,%.2f,%.2f,%.1f,%.1f,%.1f,%d",
+		  startProgramTime, ax, ay, az, gx, gy, gz, pressure, humidity, temperature, absoluteAltitude, relativeAltitude, pitch, roll, yaw, photoResistorValue
 	  );
 	  // calculate crc16
 	  uint16_t crc = crc16(SDmessage);
@@ -514,10 +521,17 @@ int main(void)
 	  writeToSD("Data.txt", SDmessage, SDmessageWidth);
 
 	  /*** ** LoRa ** ***/
-	  /*memset(LoRaMessage, 0, LoRaMessageWidth);
-	  LoRaMessageWidth = sprintf(LoRaMessage, "Hello World! %d <%s>\r\n", startProgramTime, (char*)gnrmcString);
+	  memset(LoRaMessage, 0, LoRaMessageWidth);
+	  // T+,Ax,y,z,Gx,y,z,Pres,Temp,AltiAbs,Light,**GPS_STRING**
+	  sprintf(LoRaMessage, "%d,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.1f,%.2f,%.2f,%d",
+	      startProgramTime, ax, ay, az, gx, gy, gz, pressure, temperature, absoluteAltitude, photoResistorValue
+	  );
+	  // calculate crc16
+	  uint16_t crcLoRa = crc16(LoRaMessage);
+	  //
+	  LoRaMessageWidth = sprintf(LoRaMessage, "%s|%04X.%s\r\n", (char*)LoRaMessage, crcLoRa, (char*)gnrmcString);
 	  lora__send_STATUS = lora_send_packet_blocking(&lora, LoRaMessage, LoRaMessageWidth, 250);
-	  memset(gnrmcString, 0, 64);*/
+	  memset(gnrmcString, 0, 64);
 	  /*** ** ==== ** ***/
 
 	  // start Echo repeater
@@ -531,7 +545,7 @@ int main(void)
 		  }
 	  }
 	  if(markProcessDelayTime == true) {
-		  if(HAL_GetTick() - echoRepeaterStartTime >= echoRepeaterDelayTime * 50) {
+		  if(HAL_GetTick() - echoRepeaterStartTime >= echoRepeaterDelayTime * 2) {
 			  endEchoDelayTime();
 
 			  echoRepeaterStartTime = 0;
