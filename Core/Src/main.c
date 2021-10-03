@@ -87,8 +87,9 @@ float ax, ay, az, gx, gy, gz, relativeAltitude, absoluteAltitude;
 float pitch, roll, yaw;
 uint32_t
 	photoResistorValue = 0,
-	photoResistorThreshold = 500 // 0 - 4095 range
+	photoResistorThreshold = 450 // 0 - 4095 range
 ;
+bool echoAllowed = false;
 
 //// ======  Debug Statuses  ====== ////
 FRESULT
@@ -214,7 +215,7 @@ void endEchoDelayTime() {
 }
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
-	if(GPIO_Pin == GPIO_PIN_0) { // if signal in PB0 falling...
+	if(GPIO_Pin == GPIO_PIN_0 && echoAllowed == true) { // if signal in PB0 falling... & echo allowed
 
 		// log to sd for debug
 		memset(SDmessage, 0, SDmessageWidth);
@@ -371,7 +372,9 @@ int main(void)
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
-
+  // before-start delay for photoresist
+  HAL_Delay(30000);
+  //
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
@@ -506,6 +509,9 @@ int main(void)
 	  HAL_ADC_Stop(&hadc2);
 	  if(photoResistorValue >= photoResistorThreshold) {
 		  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_6, GPIO_PIN_SET);
+
+		  // allow echo-repeater
+		  echoAllowed = true;
 	  }
 
 	  // sd
@@ -522,9 +528,9 @@ int main(void)
 
 	  /*** ** LoRa ** ***/
 	  memset(LoRaMessage, 0, LoRaMessageWidth);
-	  // T+,Ax,y,z,Gx,y,z,Pres,Temp,AltiAbs,Light,**GPS_STRING**
+	  // T+,Ax,y,z,Gx,y,z,Pres,Temp,AltiRel,Light,**GPS_STRING**
 	  sprintf(LoRaMessage, "%d,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.1f,%.2f,%.2f,%d",
-	      startProgramTime, ax, ay, az, gx, gy, gz, pressure, temperature, absoluteAltitude, photoResistorValue
+	      startProgramTime, ax, ay, az, gx, gy, gz, pressure, temperature, relativeAltitude, photoResistorValue
 	  );
 	  // calculate crc16
 	  uint16_t crcLoRa = crc16(LoRaMessage);
