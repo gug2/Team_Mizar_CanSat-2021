@@ -22,7 +22,6 @@
 #include "adc.h"
 #include "fatfs.h"
 #include "i2c.h"
-#include "iwdg.h"
 #include "rtc.h"
 #include "sdio.h"
 #include "spi.h"
@@ -87,9 +86,8 @@ float ax, ay, az, gx, gy, gz, relativeAltitude, absoluteAltitude;
 float pitch, roll, yaw;
 uint32_t
 	photoResistorValue = 0,
-	photoResistorThreshold = 450 // 0 - 4095 range
+	photoResistorThreshold = 400 // 0 - 4095 range, old val - 450
 ;
-bool echoAllowed = false;
 
 //// ======  Debug Statuses  ====== ////
 FRESULT
@@ -215,7 +213,7 @@ void endEchoDelayTime() {
 }
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
-	if(GPIO_Pin == GPIO_PIN_0 && echoAllowed == true) { // if signal in PB0 falling... & echo allowed
+	if(GPIO_Pin == GPIO_PIN_0) { // if signal in PB0 falling... & echo allowed
 
 		// log to sd for debug
 		memset(SDmessage, 0, SDmessageWidth);
@@ -258,10 +256,11 @@ float altitude(float pressure, bool isRelative) {
 	if(isRelative == true) {
 		ref = reference_pressure;
 	} else if(isRelative == false) {
-		ref = 101325.0F; // Sea level pressure in [Pa]
+		float startAltitude = 110.0F;
+		ref = reference_pressure / powf(1.0F - (startAltitude / 44330.0F), 5.255F); // Sea level pressure in [Pa]
 	}
 
-	return 44300.0F * (1.0F - powf(pressure / ref, 1.0F / 5.255F));
+	return 44330.0F * (1.0F - powf(pressure / ref, 1.0F / 5.255F));
 }
 
 // ВАЖНО! Запись на SD производится ТОЛЬКО ПР�? ОТКЛЮЧЕННОМ ОТ СЕТ�? �? ОТ STM программаторе
@@ -314,11 +313,11 @@ int8_t bmi160__init() {
 	result = bmi160_init(&bmi160);
 
 	bmi160.accel_cfg.odr = BMI160_ACCEL_ODR_1600HZ;
-	bmi160.accel_cfg.range = BMI160_ACCEL_RANGE_2G;
+	bmi160.accel_cfg.range = BMI160_ACCEL_RANGE_16G;
 	bmi160.accel_cfg.bw = BMI160_ACCEL_BW_NORMAL_AVG4;
 	bmi160.accel_cfg.power = BMI160_ACCEL_NORMAL_MODE;
 	bmi160.gyro_cfg.odr = BMI160_GYRO_ODR_3200HZ;
-	bmi160.gyro_cfg.range = BMI160_GYRO_RANGE_250_DPS;
+	bmi160.gyro_cfg.range = BMI160_GYRO_RANGE_1000_DPS;
 	bmi160.gyro_cfg.bw = BMI160_GYRO_BW_NORMAL_MODE;
 	bmi160.gyro_cfg.power = BMI160_GYRO_NORMAL_MODE;
 	result = bmi160_set_sens_conf(&bmi160);
@@ -372,9 +371,7 @@ int main(void)
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
-  // before-start delay for photoresist
-  HAL_Delay(30000);
-  //
+
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
@@ -386,13 +383,8 @@ int main(void)
   MX_TIM1_Init();
   MX_I2C1_Init();
   MX_SPI1_Init();
-  MX_IWDG_Init();
   MX_ADC2_Init();
   /* USER CODE BEGIN 2 */
-
-  // watchdog init \start
-  HAL_IWDG_Init(&hiwdg);
-  // watchdog init \end
 
   bmp280__init_STATUS = bmp280__init();
   bmi160__init_STATUS = bmi160__init();
@@ -430,28 +422,27 @@ int main(void)
 	  startProgramTime = HAL_GetTick();
 	  //// ==== ////
 
-	  // watchdog \refresh start
-	  HAL_IWDG_Refresh(&hiwdg);
-	  // watchdog \refresh end
-
 	  if(gpsRxIndex > 0) {
 		  char* nmea = (char*)gpsRxBuffer;
 
+
+		  // GNRMC - GNVTG
+		  // GNGGA - GNGSA
 		  if(validate(nmea)) {
 			  for(uint8_t i = 0; i < strlen(nmea) - 5; i++) {
 				  if(nmea[i] == '$'
 				  && nmea[i+1] == 'G'
 			      && nmea[i+2] == 'N'
-			      && nmea[i+3] == 'R'
-			      && nmea[i+4] == 'M'
-		          && nmea[i+5] == 'C') gnrmcCounter = i;
+			      && nmea[i+3] == 'G'
+			      && nmea[i+4] == 'G'
+		          && nmea[i+5] == 'A') gnrmcCounter = i;
 
 				  if(nmea[i] == '$'
 			      && nmea[i+1] == 'G'
 			      && nmea[i+2] == 'N'
-			      && nmea[i+3] == 'V'
-			      && nmea[i+4] == 'T'
-			      && nmea[i+5] == 'G') gnvtgCounter = i;
+			      && nmea[i+3] == 'G'
+			      && nmea[i+4] == 'S'
+			      && nmea[i+5] == 'A') gnvtgCounter = i;
 			  }
 		  }
 
@@ -480,7 +471,7 @@ int main(void)
 	      memset(gpsRxBuffer, 0, 128);
 	      gpsRxIndex = 0;
 	      gpsRx = 0;
-	      // ** LoRa Radio send string => comment this **
+	      // ** LoRa Radio send gps string => comment this **
 	      //memset(gnrmcString, 0, 64);
 	  }
 
@@ -492,32 +483,40 @@ int main(void)
 	  absoluteAltitude = altitude(pressure, false);
 
 	  bmi160_get_sensor_data(BMI160_BOTH_ACCEL_AND_GYRO, &accel, &gyro, &bmi160);
-	  ax = accel.x / 32768.0F * 2.0F * 9.81F;
-	  ay = accel.y / 32768.0F * 2.0F * 9.81F;
-	  az = accel.z / 32768.0F * 2.0F * 9.81F;
-	  gx = gyro.x / 32768.0F * 250.0F;
-	  gy = gyro.y / 32768.0F * 250.0F;
-	  gz = gyro.z / 32768.0F * 250.0F;
+	  ax = accel.x / 32768.0F * 16.0F * 9.81F;
+	  ay = accel.y / 32768.0F * 16.0F * 9.81F;
+	  az = accel.z / 32768.0F * 16.0F * 9.81F;
+	  gx = gyro.x / 32768.0F * 1000.0F;
+	  gy = gyro.y / 32768.0F * 1000.0F;
+	  gz = gyro.z / 32768.0F * 1000.0F;
+
+	  // invert axis
+	  ay = -ay;
+	  gy = -gy;
+	  //
 
 	  pitch = atan2(ay, sqrt(ax*ax + az*az)) * (180.0F / 3.14F);
 	  roll = atan2(-ax, sqrt(ay*ay + az*az)) * (180.0F / 3.14F);
 	  yaw = gz;
 
+	  // gyroscope: negative if rotation clockwise
+	  // pitch/roll positive if your rotate up, right (view from top of plate)
+	  // угловая скорость: отрицательна при повороте по часовой стрелке
+	  // тангаж/крен положителен при наклонении вперед и направо (смотря от верха платы)
+	  pitch = pitch - 90.0F;
+
 	  HAL_ADC_Start(&hadc2);
-	  HAL_ADC_PollForConversion(&hadc2, 250);
+	  HAL_ADC_PollForConversion(&hadc2, 500);
 	  photoResistorValue = HAL_ADC_GetValue(&hadc2);
 	  HAL_ADC_Stop(&hadc2);
-	  if(photoResistorValue >= photoResistorThreshold) {
+	  if(startProgramTime >= 5000 && photoResistorValue >= photoResistorThreshold) {
 		  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_6, GPIO_PIN_SET);
-
-		  // allow echo-repeater
-		  echoAllowed = true;
 	  }
 
 	  // sd
 	  memset(SDmessage, 0, SDmessageWidth);
 	  sprintf(SDmessage,
-	      "%d,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.1f,%.1f,%.2f,%.2f,%.2f,%.1f,%.1f,%.1f,%d",
+	      "%d|%.2f|%.2f|%.2f|%.2f|%.2f|%.2f|%.1f|%.1f|%.2f|%.2f|%.2f|%.2f|%.2f|%.2f|%d",
 		  startProgramTime, ax, ay, az, gx, gy, gz, pressure, humidity, temperature, absoluteAltitude, relativeAltitude, pitch, roll, yaw, photoResistorValue
 	  );
 	  // calculate crc16
@@ -529,14 +528,15 @@ int main(void)
 	  /*** ** LoRa ** ***/
 	  memset(LoRaMessage, 0, LoRaMessageWidth);
 	  // T+,Ax,y,z,Gx,y,z,Pres,Temp,AltiRel,Light,**GPS_STRING**
-	  sprintf(LoRaMessage, "%d,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.1f,%.2f,%.2f,%d",
-	      startProgramTime, ax, ay, az, gx, gy, gz, pressure, temperature, relativeAltitude, photoResistorValue
+	  sprintf(LoRaMessage, "%d|%.2f|%.2f|%.2f|%.2f|%.2f|%.2f|%.1f|%.2f|%.2f|%.2f|%d",
+	      startProgramTime, ax, ay, az, gx, gy, gz, pressure, temperature, relativeAltitude, absoluteAltitude, photoResistorValue
 	  );
 	  // calculate crc16
 	  uint16_t crcLoRa = crc16(LoRaMessage);
 	  //
-	  LoRaMessageWidth = sprintf(LoRaMessage, "%s|%04X.%s\r\n", (char*)LoRaMessage, crcLoRa, (char*)gnrmcString);
-	  lora__send_STATUS = lora_send_packet_blocking(&lora, LoRaMessage, LoRaMessageWidth, 250);
+
+	  LoRaMessageWidth = sprintf(LoRaMessage, "%s|%04X|%s\r\n", (char*)LoRaMessage, crcLoRa, (char*)gnrmcString);
+	  //lora__send_STATUS = lora_send_packet_blocking(&lora, LoRaMessage, LoRaMessageWidth, 250);
 	  memset(gnrmcString, 0, 64);
 	  /*** ** ==== ** ***/
 
@@ -551,7 +551,7 @@ int main(void)
 		  }
 	  }
 	  if(markProcessDelayTime == true) {
-		  if(HAL_GetTick() - echoRepeaterStartTime >= echoRepeaterDelayTime * 2) {
+		  if(HAL_GetTick() - echoRepeaterStartTime >= echoRepeaterDelayTime * 66/*2*/) {
 			  endEchoDelayTime();
 
 			  echoRepeaterStartTime = 0;
